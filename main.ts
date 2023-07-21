@@ -1,4 +1,5 @@
 import * as constant from "const";
+import * as utils from "utils";
 import { TFile, Editor, EditorPosition, EditorSelection, Notice, Plugin, requireApiVersion } from "obsidian";
 declare module "obsidian" {
 	// add type safety for the undocumented methods
@@ -62,10 +63,10 @@ export default class SmarterMDhotkeys extends Plugin {
 			this.smarterCopyFileName(activeFile);
 		// Toggle Line Numbers
 		} else if (commandID === "toggle-line-numbers") {
-			this.toggleLineNumbers(activeFile);
+			this.toggleLineNumbers();
 		// Toggle Readable Line Length
 		} else if (commandID === "toggle-readable-line-length") {
-			this.toggleReadableLineLength(activeFile);
+			this.toggleReadableLineLength();
 		// Hide Notice
 		} else if (commandID === "hide-notice") {
 			const isVersionFifteen = requireApiVersion("0.15.0");
@@ -129,12 +130,12 @@ export default class SmarterMDhotkeys extends Plugin {
 		new Notice("File Name copied: \n" + fileName);
 	}
 
-	async toggleLineNumbers(activeFile: TFile) {
+	async toggleLineNumbers() {
 		const optionEnabled = this.app.vault.getConfig("showLineNumber");
 		this.app.vault.setConfig("showLineNumber", !optionEnabled);
 	}
 
-	async toggleReadableLineLength(activeFile: TFile) {
+	async toggleReadableLineLength() {
 		const optionEnabled = this.app.vault.getConfig("readableLineLength");
 		this.app.vault.setConfig("readableLineLength", !optionEnabled);
 	}
@@ -145,71 +146,12 @@ export default class SmarterMDhotkeys extends Plugin {
 			shift: number;
 		}
 
-		// Utility Functions TODO: export these to an `utils.ts`
-		//-------------------------------------------------------------------
-		const startOffset = () => editor.posToOffset(editor.getCursor("from"));
-		const endOffset = () => editor.posToOffset(editor.getCursor("to"));
-		const noteLength = () => editor.getValue().length;
-		const offToPos = (offset: number) => {
-			// prevent error when at the start or beginning of document
-			if (offset < 0) offset = 0;
-			if (offset > noteLength()) offset = noteLength();
-			return editor.offsetToPos(offset);
-		};
-		function isOutsideSel (bef:string, aft:string) {
-			const so = startOffset();
-			const eo = endOffset();
-
-			if (so - bef.length < 0) return false; // beginning of the document
-			if (eo - aft.length > noteLength()) return false; // end of the document
-
-			const charsBefore = editor.getRange(offToPos(so - bef.length), offToPos(so));
-			const charsAfter = editor.getRange(offToPos(eo), offToPos(eo + aft.length));
-			return charsBefore === bef && charsAfter === aft;
-		}
-
-		const isMultiLineMarkup = () => ["`", "%%", "<!--", "$"].includes(frontMarkup);
-		const markupOutsideSel = () => isOutsideSel (frontMarkup, endMarkup);
-		function markupOutsideMultiline (anchor: EditorPosition, head: EditorPosition) {
-			if (anchor.line === 0) return false;
-			if (head.line === editor.lastLine()) return false;
-
-			const prevLineContent = editor.getLine(anchor.line - 1);
-			const followLineContent = editor.getLine(head.line + 1);
-			return prevLineContent.startsWith(frontMarkup) && followLineContent.startsWith(endMarkup);
-		}
-
-		const noSel = () => !editor.somethingSelected();
-		const multiLineSel = () => editor.getSelection().includes("\n");
-
-
-		function deleteLine (lineNo: number) {
-			// there is no 'next line' when cursor is on the last line
-			if (lineNo < editor.lastLine()) {
-				const lineStart = { line: lineNo, ch: 0 };
-				const nextLineStart = { line: lineNo + 1, ch: 0 };
-				editor.replaceRange("", lineStart, nextLineStart);
-			} else {
-				const previousLineEnd = { line: lineNo - 1, ch: editor.getLine(lineNo).length };
-				const lineEnd = { line: lineNo, ch: editor.getLine(lineNo).length };
-				editor.replaceRange("", previousLineEnd, lineEnd);
-			}
-		}
-
-		function log (msg: string, appendSelection?: boolean) {
-			if (!constant.DEBUGGING) return;
-			let appended = "";
-			if (appendSelection) appended = ": \"" + editor.getSelection() + "\"";
-			if (!msg.startsWith("\n")) msg = "- " + msg;
-			console.log(msg + appended);
-		}
-
 		// Core Functions
 		//-------------------------------------------------------------------
 		function textUnderCursor (ep: EditorPosition) {
 
 			// prevent underscores (wrongly counted as words) to be expanded to
-			if (markupOutsideSel() && noSel()) return { anchor: ep, head: ep };
+			if (utils.markupOutsideSel(editor, frontMarkup, endMarkup) && utils.noSel(editor)) return { anchor: ep, head: ep };
 
 			let endPos, startPos;
 			if (frontMarkup !== "`") {
@@ -224,30 +166,30 @@ export default class SmarterMDhotkeys extends Plugin {
 				const word = editor.cm.state.wordAt(editor.posToOffset (ep)); // CM6
 				if (!word) return { anchor: ep, head: ep }; // for when there is no word close by
 
-				startPos = offToPos(word.from);
-				endPos = offToPos(word.to);
+				startPos = utils.offToPos(editor, word.from);
+				endPos = utils.offToPos(editor, word.to);
 			}
 
 			// Inline-Code: use only space as delimiter
 			if (frontMarkup === "`" || frontMarkup === "$") {
-				log ("Getting Code under Cursor");
+				utils.log(editor, "Getting Code under Cursor");
 				const so = editor.posToOffset(ep);
 				let charAfter, charBefore;
 				let [i, j, endReached, startReached] = [0, 0, false, false];
 
 				while (!/\s/.test(charBefore) && !startReached) {
-					charBefore = editor.getRange(offToPos(so - (i+1)), offToPos(so - i));
+					charBefore = editor.getRange(utils.offToPos(editor, so - (i+1)), utils.offToPos(editor, so - i));
 					i++;
 					if (so-(i-1) === 0) startReached = true;
 				}
 				while (!/\s/.test(charAfter) && !endReached) {
-					charAfter = editor.getRange(offToPos(so + j), offToPos(so + j+1));
+					charAfter = editor.getRange(utils.offToPos(editor, so + j), utils.offToPos(editor, so + j+1));
 					j++;
-					if (so+(j-1) === noteLength()) endReached = true;
+					if (so+(j-1) === utils.noteLength(editor)) endReached = true;
 				}
 
-				startPos = offToPos(so - (i-1));
-				endPos = offToPos(so + (j-1));
+				startPos = utils.offToPos(editor, so - (i-1));
+				endPos = utils.offToPos(editor, so + (j-1));
 			}
 
 			return { anchor: startPos, head: endPos };
@@ -258,7 +200,7 @@ export default class SmarterMDhotkeys extends Plugin {
 			let trimBefore = constant.TRIMBEFORE;
 
 			// modify what to trim based on command
-			if (isMultiLineMarkup()) {
+			if (utils.isMultiLineMarkup(frontMarkup)) {
 				trimBefore = [frontMarkup];
 				trimAfter = [endMarkup];
 			} else if (endMarkup) { // check needed to ensure no special commands are added
@@ -267,8 +209,8 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			let selection = editor.getSelection();
-			let so = startOffset();
-			log ("before trim", true);
+			let so = utils.startOffset(editor);
+			console.log(editor, "before trim", true);
 
 			// before
 			let trimFinished = false;
@@ -300,13 +242,13 @@ export default class SmarterMDhotkeys extends Plugin {
 			const blockID = selection.match(/ \^\w+$/);
 			if (blockID) selection = selection.slice(0, -blockID[0].length);
 
-			editor.setSelection(offToPos(so), offToPos(so + selection.length));
-			log ("after trim", true);
+			editor.setSelection(utils.offToPos(editor, so), utils.offToPos(editor, so + selection.length));
+			utils.log(editor, "after trim", true);
 		}
 
 		function expandSelection () {
 			trimSelection();
-			log ("before expandSelection", true);
+			utils.log(editor, "before expandSelection", true);
 
 			// expand to word
 			const preSelExpAnchor = editor.getCursor("from");
@@ -327,7 +269,7 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			editor.setSelection(firstWordRange.anchor, lastWordRange.head);
-			log ("after expandSelection", true);
+			utils.log(editor, "after expandSelection", true);
 			trimSelection();
 
 			// has to come after trimming to include things like brackets
@@ -336,7 +278,7 @@ export default class SmarterMDhotkeys extends Plugin {
 				if (pair[0] === frontMarkup || pair[1] === endMarkup ) return; // allow undoing of the command creating the syntax
 				const trimLastSpace = Boolean(pair[2]);
 
-				if (isOutsideSel (pair[0], pair[1])) {
+				if (utils.isOutsideSel(editor, pair[0], pair[1])) {
 					firstWordRange.anchor.ch -= pair[0].length;
 					lastWordRange.head.ch += pair[1].length;
 					if (trimLastSpace) lastWordRange.head.ch--; // to avoid conflicts between trimming and expansion
@@ -357,14 +299,14 @@ export default class SmarterMDhotkeys extends Plugin {
 
 		function applyMarkup (preAnchor: EditorPosition, preHead: EditorPosition, lineMode: string ) {
 			let selectedText = editor.getSelection();
-			const so = startOffset();
-			let eo = endOffset();
+			const so = utils.startOffset(editor);
+			let eo = utils.endOffset(editor);
 
 			// abort if empty line & multi, since no markup on empty line in between desired
-			if (noSel() && lineMode === "multi") return;
+			if (utils.noSel(editor) && lineMode === "multi") return;
 
 			// Do Markup
-			if (!markupOutsideSel()) {
+			if (!utils.markupOutsideSel(editor, frontMarkup, endMarkup)) {
 				// insert extra space for comments
 				if (["%%", "<!--"].includes(frontMarkup)) {
 					selectedText = " " + selectedText + " ";
@@ -384,8 +326,8 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			// Undo Markup (outside selection, inside not necessary as trimmed already)
-			if (markupOutsideSel()) {
-				editor.setSelection(offToPos(so - blen), offToPos(eo + alen));
+			if (utils.markupOutsideSel(editor, frontMarkup, endMarkup)) {
+				editor.setSelection(utils.offToPos(editor, so - blen), utils.offToPos(editor, eo + alen));
 				editor.replaceSelection(selectedText);
 
 				contentChangeList.push(
@@ -419,7 +361,7 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			// do Markup
-			if (!markupOutsideMultiline(selAnchor, selHead)) {
+			if (!utils.markupOutsideMultiline(editor, frontMarkup, endMarkup, selAnchor, selHead)) {
 				editor.setSelection(selAnchor);
 				editor.replaceSelection(frontMarkup + "\n");
 				selHead.line++; // extra line to account for shift from inserting frontMarkup
@@ -435,9 +377,9 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			// undo Block Markup
-			if (markupOutsideMultiline(selAnchor, selHead)) {
-				deleteLine(selAnchor.line - 1);
-				deleteLine(selHead.line); // not "+1" due to shift from previous line deletion
+			if (utils.markupOutsideMultiline(editor, frontMarkup, endMarkup, selAnchor, selHead)) {
+				utils.deleteLine(editor, selAnchor.line - 1);
+				utils.deleteLine(editor, selHead.line); // not "+1" due to shift from previous line deletion
 			}
 		}
 
@@ -457,7 +399,7 @@ export default class SmarterMDhotkeys extends Plugin {
 
 		function	smartDelete() {
 			// expand selection to prevent double spaces after deletion
-			if (isOutsideSel(" ", "")) {
+			if (utils.isOutsideSel(editor, " ", "")) {
 				const anchor = editor.getCursor("from");
 				const head = editor.getCursor("to");
 				if (anchor.ch) anchor.ch--; // do not apply to first line position
@@ -546,7 +488,7 @@ export default class SmarterMDhotkeys extends Plugin {
 
 		// MAIN
 		//-------------------------------------------------------------------
-		log("\nSmarterMD Hotkeys triggered\n---------------------------");
+		utils.log(editor, "\nSmarterMD Hotkeys triggered\n---------------------------");
 
 		// does not have to occur in multi-cursor loop since it already works
 		// on every cursor
@@ -579,16 +521,17 @@ export default class SmarterMDhotkeys extends Plugin {
 
 			// run special cases instead
 			if (frontMarkup === "delete") {
-				log ("Smart Delete");
+				utils.log(editor, "Smart Delete");
 				expandSelection();
 				smartDelete();
 			}
 			else if (frontMarkup === "case-switch") {
-				log ("Smart Case Switch");
+				utils.log(editor, "Smart Case Switch");
 				const { anchor: preSelExpAnchor, head: preSelExpHead } = expandSelection();
 				smartCaseSwitch(preSelExpAnchor, preSelExpHead);
 			} else if (frontMarkup === "heading") {
-				log("Smart Toggle Heading");
+				utils.log(editor, "Smart Toggle Heading");
+
         		// get selection range and check if several lines
 				const selected = editor.getSelection();
 				if (selected && selected.includes("\n")) {
@@ -614,32 +557,32 @@ export default class SmarterMDhotkeys extends Plugin {
 			}
 
 			// wrap single line selection
-			else if (!multiLineSel()) {
-				log ("single line");
+			else if (!utils.multiLineSel(editor)) {
+				utils.log(editor, "single line");
 				const { anchor: preSelExpAnchor, head: preSelExpHead } = expandSelection();
 				applyMarkup(preSelExpAnchor, preSelExpHead, "single");
 			}
 			// Wrap multi-line selection
-			else if (multiLineSel() && isMultiLineMarkup()) {
-				log ("Multiline Wrap");
+			else if (utils.multiLineSel(editor) && utils.isMultiLineMarkup(frontMarkup)) {
+				utils.log(editor, "Multiline Wrap");
 				wrapMultiLine();
 			}
 			// Wrap *each* line of multi-line selection
-			else if (multiLineSel() && !isMultiLineMarkup()) {
-				let pointerOff = startOffset();
+			else if (utils.multiLineSel(editor) && !utils.isMultiLineMarkup(frontMarkup)) {
+				let pointerOff = utils.startOffset(editor);
 				const lines = editor.getSelection().split("\n");
-				log ("lines: " + lines.length.toString());
+				utils.log(editor, "lines: " + lines.length.toString());
 
 				// get offsets for each line and apply markup to each
 				lines.forEach (line => {
 					console.log("");
-					editor.setSelection(offToPos(pointerOff), offToPos(pointerOff + line.length));
+					editor.setSelection(utils.offToPos(editor, pointerOff), utils.offToPos(editor, pointerOff + line.length));
 
 					const { anchor: preSelExpAnchor, head: preSelExpHead } = expandSelection();
 
 					// Move Pointer to next line
 					pointerOff += line.length + 1; // +1 to account for line break
-					if (markupOutsideSel()) pointerOff-= blen + alen; // account for removed markup
+					if (utils.markupOutsideSel(editor, frontMarkup, endMarkup)) pointerOff-= blen + alen; // account for removed markup
 					else pointerOff += blen + alen; // account for added markup
 
 					applyMarkup(preSelExpAnchor, preSelExpHead, "multi");
