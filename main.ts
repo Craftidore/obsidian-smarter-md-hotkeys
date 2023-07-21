@@ -48,6 +48,7 @@ export default class SmarterMDhotkeys extends Plugin {
 
 	async onunload() { console.log("Smarter MD Hotkeys unloaded.") }
 
+	// TODO: Call these separately instead of using this middleman function
 	async otherCommands (commandID: string) {
 		const activeFile = this.app.workspace.getActiveFile();
 		if (!activeFile) return; // no file open

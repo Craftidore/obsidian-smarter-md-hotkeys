@@ -1,7 +1,6 @@
 import * as constant from "const"
 import { Editor, EditorPosition } from "obsidian"
-// Utility Functions TODO: export these to an `utils.ts`
-//-------------------------------------------------------------------
+
 export const startOffset = (editor: Editor) => editor.posToOffset(editor.getCursor("from"));
 export const endOffset = (editor: Editor) => editor.posToOffset(editor.getCursor("to"));
 export const noteLength = (editor: Editor) => editor.getValue().length;
